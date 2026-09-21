@@ -12,6 +12,7 @@ from agents.reviewer import ReviewDecision, review_ticket
 from core.file_changes import create_new_files, replace_existing_files
 from core.model import DEFAULT_MODEL, ask_model, available_models
 from core.project_setup import initialize_new_python_project
+from core.publishing import publish_project
 from core.run_reports import write_run_report
 from core.workspace import CheckResult, SafetyError, SafeWorkspace
 
@@ -353,6 +354,34 @@ def repair(project: str, request: str, approve: bool = False) -> None:
 
     if decision.decision == "reject":
         raise typer.Exit(code=1)
+
+
+@app.command()
+def publish(
+    project: str,
+    approve: bool = False,
+    public: bool = False,
+) -> None:
+    """Publish an accepted project to its own private GitHub repository."""
+    if not approve:
+        console.print(
+            "[yellow]Blocked:[/yellow] rerun with --approve to publish."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        repository_url = publish_project(
+            project,
+            get_workspace(project),
+            public=public,
+        )
+    except SafetyError as error:
+        console.print(f"[red]Publish failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    visibility = "public" if public else "private"
+    console.print(f"[green]Published {visibility} repository:[/green]")
+    console.print(repository_url)
 
 
 if __name__ == "__main__":
