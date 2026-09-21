@@ -5,15 +5,15 @@ from rich.console import Console
 from rich.table import Table
 
 from agents.architect import ImplementationPlan, create_plan
-from agents.builder import BuildProposal, propose_build
+from agents.builder import BuildProposal, propose_build, propose_repair
 from agents.lead import Ticket, create_ticket
 from agents.qa import QaReport, evaluate_qa
 from agents.reviewer import ReviewDecision, review_ticket
-from core.file_changes import create_new_files
+from core.file_changes import create_new_files, replace_existing_files
 from core.model import DEFAULT_MODEL, ask_model, available_models
 from core.project_setup import initialize_new_python_project
 from core.run_reports import write_run_report
-from core.workspace import SafetyError, SafeWorkspace
+from core.workspace import CheckResult, SafetyError, SafeWorkspace
 
 app = typer.Typer(
     name="DumbBots",
@@ -23,29 +23,67 @@ app = typer.Typer(
 console = Console()
 
 
-def get_workspace(project: str) -> SafeWorkspace:
-    return SafeWorkspace(get_project_path(project))
 def get_project_path(project: str) -> Path:
     if not project or Path(project).name != project:
         raise SafetyError("Project name must be a single folder name.")
 
     return Path("projects") / project
+
+
+def get_workspace(project: str) -> SafeWorkspace:
+    return SafeWorkspace(get_project_path(project))
+
+
+def collect_source_files(workspace: SafeWorkspace) -> dict[str, str]:
+    return {
+        file_name: workspace.read_file(file_name)
+        for file_name in workspace.list_files()
+        if file_name.endswith(".py") and not file_name.endswith("__init__.py")
+    }
+
+
+def run_checks(workspace: SafeWorkspace) -> list[CheckResult]:
+    return [workspace.run_check("pytest"), workspace.run_check("ruff")]
+
+
+def show_plan(ticket: Ticket, implementation_plan: ImplementationPlan) -> None:
+    table = Table(title="Architect Bot plan")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Ticket", ticket.title)
+    table.add_row(
+        "Target files",
+        "\n".join(f"• {item}" for item in implementation_plan.target_files),
+    )
+    table.add_row(
+        "Steps",
+        "\n".join(f"• {item}" for item in implementation_plan.steps),
+    )
+    table.add_row(
+        "Tests to add",
+        "\n".join(f"• {item}" for item in implementation_plan.tests_to_add),
+    )
+    table.add_row(
+        "Risks",
+        "\n".join(f"• {item}" for item in implementation_plan.risks)
+        or "None identified",
+    )
+    console.print(table)
+
+
 @app.command()
 def health() -> None:
     """Show available local models."""
     models = available_models()
-
     table = Table(title="DumbBots model health")
     table.add_column("Model")
+
     for model in models:
         table.add_row(model)
 
     console.print(table)
-
-    if DEFAULT_MODEL in models:
-        console.print(f"[green]Ready:[/green] {DEFAULT_MODEL}")
-    else:
-        console.print(f"[red]Missing:[/red] {DEFAULT_MODEL}")
+    status = "[green]Ready:[/green]" if DEFAULT_MODEL in models else "[red]Missing:[/red]"
+    console.print(f"{status} {DEFAULT_MODEL}")
 
 
 @app.command()
@@ -66,10 +104,8 @@ def inspect(project: str) -> None:
 
     table = Table(title=f"Project: {project}")
     table.add_column("Files")
-
     for file_name in files:
         table.add_row(file_name)
-
     console.print(table)
 
 
@@ -83,7 +119,6 @@ def check(project: str, name: str) -> None:
         raise typer.Exit(code=1) from error
 
     console.print(result.output or "No output.")
-
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -92,7 +127,7 @@ def check(project: str, name: str) -> None:
 def create_ticket_command(request: str) -> None:
     """Ask Lead Bot to convert a request into one engineering ticket."""
     try:
-        ticket: Ticket = create_ticket(request)
+        ticket = create_ticket(request)
     except Exception as error:
         console.print(f"[red]Lead Bot failed:[/red] {error}")
         raise typer.Exit(code=1) from error
@@ -100,7 +135,6 @@ def create_ticket_command(request: str) -> None:
     table = Table(title="Lead Bot ticket")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
-
     table.add_row("Title", ticket.title)
     table.add_row("Summary", ticket.summary)
     table.add_row(
@@ -112,8 +146,8 @@ def create_ticket_command(request: str) -> None:
         "\n".join(f"• {item}" for item in ticket.out_of_scope),
     )
     table.add_row("Suggested checks", ", ".join(ticket.suggested_checks))
-
     console.print(table)
+
 
 @app.command()
 def plan(project: str, request: str) -> None:
@@ -121,28 +155,13 @@ def plan(project: str, request: str) -> None:
     try:
         workspace = get_workspace(project)
         ticket = create_ticket(request)
-        implementation_plan: ImplementationPlan = create_plan(
-            ticket,
-            workspace.list_files(),
-        )
+        implementation_plan = create_plan(ticket, workspace.list_files())
     except (SafetyError, ValueError) as error:
         console.print(f"[red]Planning failed:[/red] {error}")
         raise typer.Exit(code=1) from error
 
-    table = Table(title="Architect Bot plan")
-    table.add_column("Field", style="cyan")
-    table.add_column("Value")
+    show_plan(ticket, implementation_plan)
 
-    table.add_row("Ticket", ticket.title)
-    table.add_row("Target files", "\n".join(f"• {item}" for item in implementation_plan.target_files))
-    table.add_row("Steps", "\n".join(f"• {item}" for item in implementation_plan.steps))
-    table.add_row("Tests to add", "\n".join(f"• {item}" for item in implementation_plan.tests_to_add))
-    table.add_row(
-        "Risks",
-        "\n".join(f"• {item}" for item in implementation_plan.risks) or "None identified",
-    )
-
-    console.print(table)
 
 @app.command()
 def build(project: str, request: str, approve: bool = False) -> None:
@@ -165,22 +184,15 @@ def build(project: str, request: str, approve: bool = False) -> None:
     for file_name in written:
         console.print(f"• {file_name}")
 
+
 @app.command()
 def qa(project: str, request: str) -> None:
     """Run independent read-only QA against one project and ticket."""
     try:
         workspace = get_workspace(project)
         ticket = create_ticket(request)
-        source_files = {
-            file_name: workspace.read_file(file_name)
-            for file_name in workspace.list_files()
-            if file_name.endswith(".py")
-        }
-        checks = [
-            workspace.run_check("pytest"),
-            workspace.run_check("ruff"),
-        ]
-        report: QaReport = evaluate_qa(ticket, source_files, checks)
+        checks = run_checks(workspace)
+        report: QaReport = evaluate_qa(ticket, collect_source_files(workspace), checks)
     except (SafetyError, ValueError) as error:
         console.print(f"[red]QA failed:[/red] {error}")
         raise typer.Exit(code=1) from error
@@ -188,7 +200,6 @@ def qa(project: str, request: str) -> None:
     table = Table(title="QA Bot report")
     table.add_column("Field", style="cyan")
     table.add_column("Value")
-
     table.add_row("Decision", report.decision.upper())
     table.add_row("Summary", report.summary)
     table.add_row("Findings", "\n".join(f"• {item}" for item in report.findings))
@@ -196,22 +207,16 @@ def qa(project: str, request: str) -> None:
 
     if report.decision == "reject":
         raise typer.Exit(code=1)
+
+
 @app.command()
 def review(project: str, request: str) -> None:
     """Run QA, make a final review decision, and save a run report."""
     try:
         workspace = get_workspace(project)
         ticket = create_ticket(request)
-        source_files = {
-            file_name: workspace.read_file(file_name)
-            for file_name in workspace.list_files()
-            if file_name.endswith(".py")
-        }
-        checks = [
-            workspace.run_check("pytest"),
-            workspace.run_check("ruff"),
-        ]
-        qa_report = evaluate_qa(ticket, source_files, checks)
+        checks = run_checks(workspace)
+        qa_report = evaluate_qa(ticket, collect_source_files(workspace), checks)
         decision: ReviewDecision = review_ticket(ticket, qa_report, checks)
         report_path = write_run_report(
             project,
@@ -240,6 +245,7 @@ def review(project: str, request: str) -> None:
     if decision.decision == "reject":
         raise typer.Exit(code=1)
 
+
 @app.command()
 def run(project: str, request: str, approve: bool = False) -> None:
     """Run Lead → Architect → Builder → QA → Reviewer for one new feature."""
@@ -249,11 +255,8 @@ def run(project: str, request: str, approve: bool = False) -> None:
         ticket = create_ticket(request)
 
         if is_new_project and not approve:
-            plan = create_plan(ticket, [])
-            console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to create the project.")
-            console.print(f"[cyan]Ticket:[/cyan] {ticket.title}")
-            for file_name in plan.target_files:
-                console.print(f"• {file_name}")
+            show_plan(ticket, create_plan(ticket, []))
+            console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to create it.")
             return
 
         workspace = (
@@ -261,27 +264,19 @@ def run(project: str, request: str, approve: bool = False) -> None:
             if is_new_project
             else get_workspace(project)
         )
-        plan = create_plan(ticket, workspace.list_files())
+        implementation_plan = create_plan(ticket, workspace.list_files())
 
         if not approve:
+            show_plan(ticket, implementation_plan)
             console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to build.")
-            console.print(f"[cyan]Ticket:[/cyan] {ticket.title}")
-            for file_name in plan.target_files:
-                console.print(f"• {file_name}")
             return
 
-        proposal = propose_build(ticket, plan)
-        written = create_new_files(workspace, proposal)
-        checks = [
-            workspace.run_check("pytest"),
-            workspace.run_check("ruff"),
-        ]
-        source_files = {
-            file_name: workspace.read_file(file_name)
-            for file_name in workspace.list_files()
-            if file_name.endswith(".py")
-        }
-        qa_report = evaluate_qa(ticket, source_files, checks)
+        written = create_new_files(
+            workspace,
+            propose_build(ticket, implementation_plan),
+        )
+        checks = run_checks(workspace)
+        qa_report = evaluate_qa(ticket, collect_source_files(workspace), checks)
         decision = review_ticket(ticket, qa_report, checks)
         report_path = write_run_report(
             project,
@@ -295,7 +290,8 @@ def run(project: str, request: str, approve: bool = False) -> None:
         console.print(f"[red]Run failed:[/red] {error}")
         raise typer.Exit(code=1) from error
 
-    console.print("[green]Workflow finished.[/green]")
+    status = "ACCEPTED" if decision.decision == "accept" else "REJECTED"
+    console.print(f"[green]Workflow {status}.[/green]")
     console.print(f"Created files: {', '.join(written)}")
     console.print(f"QA: {qa_report.decision.upper()}")
     console.print(f"Reviewer: {decision.decision.upper()}")
@@ -303,6 +299,55 @@ def run(project: str, request: str, approve: bool = False) -> None:
 
     if decision.decision == "reject":
         raise typer.Exit(code=1)
+
+
+@app.command()
+def repair(project: str, request: str, approve: bool = False) -> None:
+    """Propose and apply a bounded repair only after a failed approved check."""
+    if not approve:
+        console.print("[yellow]Blocked:[/yellow] rerun with --approve to repair files.")
+        raise typer.Exit(code=1)
+
+    try:
+        workspace = get_workspace(project)
+        ticket = create_ticket(request)
+        failed_checks = [
+            check for check in run_checks(workspace) if check.returncode != 0
+        ]
+        if not failed_checks:
+            raise SafetyError("Repair is blocked because all approved checks pass.")
+
+        proposal = propose_repair(
+            ticket,
+            collect_source_files(workspace),
+            failed_checks,
+        )
+        written = replace_existing_files(workspace, proposal)
+        checks = run_checks(workspace)
+        qa_report = evaluate_qa(ticket, collect_source_files(workspace), checks)
+        decision = review_ticket(ticket, qa_report, checks)
+        report_path = write_run_report(
+            project,
+            request,
+            ticket,
+            qa_report,
+            decision,
+            checks,
+        )
+    except (SafetyError, ValueError) as error:
+        console.print(f"[red]Repair failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    status = "ACCEPTED" if decision.decision == "accept" else "REJECTED"
+    console.print(f"[green]Repair {status}.[/green]")
+    console.print(f"Updated files: {', '.join(written)}")
+    console.print(f"QA: {qa_report.decision.upper()}")
+    console.print(f"Reviewer: {decision.decision.upper()}")
+    console.print(f"Run report: {report_path}")
+
+    if decision.decision == "reject":
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
-
