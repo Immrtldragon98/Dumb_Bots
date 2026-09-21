@@ -1,8 +1,10 @@
 import pytest
 
-from agents.architect import validate_plan
-from agents.lead import Ticket
+from agents.architect import ImplementationPlan, validate_plan
+from agents.lead import Ticket, extract_json_object
+from agents.qa import QaReport, force_reject_on_failed_checks
 from agents.reviewer import ReviewDecision, force_reject_if_evidence_failed
+from core.workspace import CheckResult
 
 
 def test_qa_rejection_forces_reviewer_rejection() -> None:
@@ -20,6 +22,7 @@ def test_qa_rejection_forces_reviewer_rejection() -> None:
 
     assert result.decision == "reject"
 
+
 def test_ticket_requires_testable_fields() -> None:
     ticket = Ticket(
         title="Add minimum stock validator",
@@ -33,14 +36,12 @@ def test_ticket_requires_testable_fields() -> None:
     )
 
     assert ticket.suggested_checks == ["pytest", "ruff"]
-from agents.lead import extract_json_object
 
 
 def test_extracts_json_from_markdown_fence() -> None:
     response = '```json\n{"title": "Example"}\n```'
 
     assert extract_json_object(response) == '{"title": "Example"}'
-from agents.architect import ImplementationPlan
 
 
 def test_implementation_plan_has_required_sections() -> None:
@@ -51,6 +52,8 @@ def test_implementation_plan_has_required_sections() -> None:
     )
 
     assert len(plan.target_files) == 2
+
+
 def test_rejects_placeholder_target_path() -> None:
     plan = ImplementationPlan(
         target_files=["relative/path.py"],
@@ -60,8 +63,6 @@ def test_rejects_placeholder_target_path() -> None:
 
     with pytest.raises(ValueError, match="Placeholder"):
         validate_plan(plan)
-from agents.qa import QaReport, force_reject_on_failed_checks
-from core.workspace import CheckResult
 
 
 def test_failed_check_forces_qa_rejection() -> None:
