@@ -82,7 +82,11 @@ def health() -> None:
         table.add_row(model)
 
     console.print(table)
-    status = "[green]Ready:[/green]" if DEFAULT_MODEL in models else "[red]Missing:[/red]"
+    status = (
+        "[green]Ready:[/green]"
+        if DEFAULT_MODEL in models
+        else "[red]Missing:[/red]"
+    )
     console.print(f"{status} {DEFAULT_MODEL}")
 
 
@@ -256,7 +260,9 @@ def run(project: str, request: str, approve: bool = False) -> None:
 
         if is_new_project and not approve:
             show_plan(ticket, create_plan(ticket, []))
-            console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to create it.")
+            console.print(
+                "[yellow]Plan ready.[/yellow] Rerun with --approve to create it."
+            )
             return
 
         workspace = (
