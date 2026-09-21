@@ -96,7 +96,8 @@ Rules:
 - Do not put Markdown fences inside file content.
 """.strip()
 
-    proposal = _parse_proposal(ask_model_json(prompt, BuildProposal.model_json_schema()))
+    response = ask_model_json(prompt, BuildProposal.model_json_schema())
+    proposal = _parse_proposal(response)
     validate_proposal(proposal, plan)
     return proposal
 
