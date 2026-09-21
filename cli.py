@@ -11,6 +11,7 @@ from agents.qa import QaReport, evaluate_qa
 from agents.reviewer import ReviewDecision, review_ticket
 from core.file_changes import create_new_files
 from core.model import DEFAULT_MODEL, ask_model, available_models
+from core.project_setup import initialize_new_python_project
 from core.run_reports import write_run_report
 from core.workspace import SafetyError, SafeWorkspace
 
@@ -23,11 +24,12 @@ console = Console()
 
 
 def get_workspace(project: str) -> SafeWorkspace:
+    return SafeWorkspace(get_project_path(project))
+def get_project_path(project: str) -> Path:
     if not project or Path(project).name != project:
         raise SafetyError("Project name must be a single folder name.")
 
-    return SafeWorkspace(Path("projects") / project)
-
+    return Path("projects") / project
 @app.command()
 def health() -> None:
     """Show available local models."""
@@ -234,6 +236,70 @@ def review(project: str, request: str) -> None:
     )
     table.add_row("Run report", str(report_path))
     console.print(table)
+
+    if decision.decision == "reject":
+        raise typer.Exit(code=1)
+
+@app.command()
+def run(project: str, request: str, approve: bool = False) -> None:
+    """Run Lead → Architect → Builder → QA → Reviewer for one new feature."""
+    try:
+        project_path = get_project_path(project)
+        is_new_project = not project_path.exists()
+        ticket = create_ticket(request)
+
+        if is_new_project and not approve:
+            plan = create_plan(ticket, [])
+            console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to create the project.")
+            console.print(f"[cyan]Ticket:[/cyan] {ticket.title}")
+            for file_name in plan.target_files:
+                console.print(f"• {file_name}")
+            return
+
+        workspace = (
+            initialize_new_python_project(project_path)
+            if is_new_project
+            else get_workspace(project)
+        )
+        plan = create_plan(ticket, workspace.list_files())
+
+        if not approve:
+            console.print("[yellow]Plan ready.[/yellow] Rerun with --approve to build.")
+            console.print(f"[cyan]Ticket:[/cyan] {ticket.title}")
+            for file_name in plan.target_files:
+                console.print(f"• {file_name}")
+            return
+
+        proposal = propose_build(ticket, plan)
+        written = create_new_files(workspace, proposal)
+        checks = [
+            workspace.run_check("pytest"),
+            workspace.run_check("ruff"),
+        ]
+        source_files = {
+            file_name: workspace.read_file(file_name)
+            for file_name in workspace.list_files()
+            if file_name.endswith(".py")
+        }
+        qa_report = evaluate_qa(ticket, source_files, checks)
+        decision = review_ticket(ticket, qa_report, checks)
+        report_path = write_run_report(
+            project,
+            request,
+            ticket,
+            qa_report,
+            decision,
+            checks,
+        )
+    except (SafetyError, ValueError) as error:
+        console.print(f"[red]Run failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    console.print("[green]Workflow finished.[/green]")
+    console.print(f"Created files: {', '.join(written)}")
+    console.print(f"QA: {qa_report.decision.upper()}")
+    console.print(f"Reviewer: {decision.decision.upper()}")
+    console.print(f"Run report: {report_path}")
 
     if decision.decision == "reject":
         raise typer.Exit(code=1)
