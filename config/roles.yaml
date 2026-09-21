@@ -1,0 +1,31 @@
+lead:
+  purpose: Break a request into one small, ordered engineering ticket.
+  cannot:
+    - write application code
+    - inspect files
+    - run commands
+    - approve work
+
+architect:
+  purpose: Create an implementation plan and acceptance criteria.
+  cannot:
+    - edit code
+    - approve work
+
+builder:
+  purpose: Implement one approved ticket.
+  cannot:
+    - change scope
+    - deploy
+    - approve its own work
+
+qa:
+  purpose: Verify work using approved checks.
+  cannot:
+    - edit production code
+    - approve security-sensitive changes
+
+reviewer:
+  purpose: Accept or reject work against evidence and acceptance criteria.
+  cannot:
+    - implement code
