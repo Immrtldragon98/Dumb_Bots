@@ -3,6 +3,34 @@
 DumbBots is a local, review-driven AI engineering workflow powered by Ollama.
 It separates planning, building, QA, review, repair, publishing, and deployment.
 
+## The simple way
+
+Install DumbBots once. For every product idea, repeat this loop:
+
+```text
+Idea -> Plan -> Approve -> Test -> Run locally -> Publish -> Deploy
+```
+
+```bash
+# 1. Start DumbBots
+cd ~/projects/dumbbots
+source .venv/bin/activate
+
+# 2. Ask for a plan
+python cli.py run my-app "Describe the product clearly" --profile fastapi
+
+# 3. Approve the build
+python cli.py run my-app "Describe the product clearly" --profile fastapi --approve
+
+# 4. If QA rejects it
+python cli.py repair my-app "Fix every failed check without changing scope" --approve
+```
+
+Your product is saved in `projects/my-app/`. See
+[docs/QUICKSTART.md](docs/QUICKSTART.md) for setup, local running, publishing,
+deployment, and troubleshooting. A printable guide is available at
+[docs/DumbBots_Quick_Start.pdf](docs/DumbBots_Quick_Start.pdf).
+
 ## Workflow
 
 ```text
