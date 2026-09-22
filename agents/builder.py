@@ -103,6 +103,7 @@ Rules:
 - Return content for every approved target file and no other file.
 {dependency_rule}
 - Tests must cover all acceptance criteria with correct expected values.
+- Keep every import block formatted for Ruff.
 - Do not put Markdown fences inside file content.
 """.strip()
 
