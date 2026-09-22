@@ -1,6 +1,6 @@
 import pytest
 
-from agents.architect import ImplementationPlan, validate_plan
+from agents.architect import ImplementationPlan, create_plan, validate_plan
 from agents.lead import Ticket, extract_json_object
 from agents.qa import QaReport, force_reject_on_failed_checks
 from agents.reviewer import ReviewDecision, force_reject_if_evidence_failed
@@ -63,6 +63,35 @@ def test_rejects_placeholder_target_path() -> None:
 
     with pytest.raises(ValueError, match="Placeholder"):
         validate_plan(plan)
+
+
+def test_fastapi_plan_requires_fixed_entrypoint_and_tests() -> None:
+    plan = ImplementationPlan(
+        target_files=["src/api.py", "tests/test_api.py"],
+        steps=["Create an API.", "Test the API."],
+        tests_to_add=["Health endpoint succeeds."],
+    )
+
+    with pytest.raises(ValueError, match="FastAPI plans"):
+        validate_plan(plan, profile="fastapi")
+
+
+def test_fastapi_plan_uses_deployable_fixed_structure() -> None:
+    ticket = Ticket(
+        title="Create inventory API",
+        summary="Expose inventory checks over an HTTP API.",
+        acceptance_criteria=[
+            "GET /items returns inventory items.",
+            "GET /health reports that the service is ready.",
+        ],
+        out_of_scope=["Authentication is excluded."],
+        suggested_checks=["pytest", "ruff"],
+    )
+
+    plan = create_plan(ticket, [], profile="fastapi")
+
+    assert plan.target_files == ["src/main.py", "tests/test_main.py"]
+    assert "health" in plan.steps[0].lower()
 
 
 def test_failed_check_forces_qa_rejection() -> None:
