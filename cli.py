@@ -6,9 +6,15 @@ from rich.table import Table
 
 from agents.architect import ImplementationPlan, create_plan
 from agents.builder import BuildProposal, propose_build, propose_repair
+from agents.deployer import (
+    DeploymentAnswers,
+    create_deployment_plan,
+    parse_environment_variable_names,
+)
 from agents.lead import Ticket, create_ticket
 from agents.qa import QaReport, evaluate_qa
 from agents.reviewer import ReviewDecision, review_ticket
+from core.deployment import push_deployment_files, write_deployment_files
 from core.file_changes import create_new_files, replace_existing_files
 from core.model import DEFAULT_MODEL, ask_model, available_models
 from core.project_setup import initialize_new_python_project
@@ -382,6 +388,102 @@ def publish(
     visibility = "public" if public else "private"
     console.print(f"[green]Published {visibility} repository:[/green]")
     console.print(repository_url)
+
+
+@app.command("deploy-chat")
+def deploy_chat(project: str) -> None:
+    """Interactively prepare and publish safe Render deployment configuration."""
+    console.print("[bold cyan]Deployment Bot[/bold cyan]")
+    console.print(
+        "I will ask for configuration names only. Never paste passwords, tokens, "
+        "API keys, or database credentials here."
+    )
+
+    try:
+        workspace = get_workspace(project)
+        audience = typer.prompt(
+            "Who should be able to access the product? (public/private)",
+            default="public",
+        ).strip().lower()
+        needs_database = typer.confirm(
+            "Does the product need a PostgreSQL database?",
+            default=False,
+        )
+        raw_environment_variables = typer.prompt(
+            "Environment variable NAMES, comma-separated (leave blank for none)",
+            default="",
+            show_default=False,
+        )
+        region = typer.prompt(
+            "Closest Render region",
+            default="singapore",
+        ).strip().lower()
+        answers = DeploymentAnswers(
+            audience=audience,
+            needs_database=needs_database,
+            environment_variables=parse_environment_variable_names(
+                raw_environment_variables
+            ),
+            region=region,
+        )
+        source_files = collect_source_files(workspace)
+        plan = create_deployment_plan(
+            project,
+            source_files,
+            workspace.list_files(),
+            answers,
+        )
+    except (SafetyError, ValueError) as error:
+        console.print(f"[red]Deployment planning failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    table = Table(title="Deployment Bot plan")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Provider", "Render")
+    table.add_row("Service", plan.service_name)
+    table.add_row("Runtime", plan.runtime)
+    table.add_row("Region", plan.region)
+    table.add_row("Build", plan.build_command)
+    table.add_row("Start", plan.start_command)
+    table.add_row("Health check", plan.health_path)
+    table.add_row("PostgreSQL", "Yes" if plan.needs_database else "No")
+    table.add_row(
+        "Secret names",
+        ", ".join(plan.environment_variables) or "None",
+    )
+    table.add_row(
+        "Steps",
+        "\n".join(f"• {item}" for item in plan.explanation),
+    )
+    console.print(table)
+
+    if not typer.confirm("Create these deployment files?", default=False):
+        console.print("[yellow]Deployment cancelled; no files were changed.[/yellow]")
+        return
+
+    try:
+        written, deeplink = write_deployment_files(project, workspace, plan)
+        console.print("[green]Deployment files created:[/green]")
+        for file_name in written:
+            console.print(f"• {file_name}")
+
+        if typer.confirm(
+            "Commit and push these two deployment files to GitHub?",
+            default=False,
+        ):
+            push_deployment_files(workspace)
+            console.print("[green]Deployment configuration pushed.[/green]")
+            console.print("Open this link and enter secret values directly in Render:")
+            console.print(deeplink)
+        else:
+            console.print(
+                "[yellow]Not pushed.[/yellow] Render cannot deploy until the files "
+                "are committed and pushed."
+            )
+    except SafetyError as error:
+        console.print(f"[red]Deployment setup failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
 
 
 if __name__ == "__main__":
