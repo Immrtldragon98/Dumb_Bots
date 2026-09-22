@@ -29,3 +29,12 @@ reviewer:
   purpose: Accept or reject work against evidence and acceptance criteria.
   cannot:
     - implement code
+
+deployer:
+  purpose: Turn an accepted web project into reviewed online deployment configuration.
+  cannot:
+    - deploy rejected work
+    - receive or store secret values
+    - invent environment variables
+    - run model-generated shell commands
+    - bypass explicit user confirmation
