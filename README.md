@@ -23,6 +23,20 @@ python cli.py publish PROJECT --approve
 python cli.py deploy-chat PROJECT
 ```
 
+## Build a web product
+
+Use the FastAPI profile when the result should be an HTTP product that can run
+locally and be handed to Deployment Bot:
+
+```bash
+python cli.py run inventory-api "Build an inventory API" --profile fastapi
+python cli.py run inventory-api "Build an inventory API" --profile fastapi --approve
+```
+
+The profile creates a Python 3.12 project manifest, approved runtime
+dependencies, a fixed `src.main:app` entrypoint, a `/health` requirement, and
+API tests. After review and publish, run `python cli.py deploy-chat inventory-api`.
+
 ## Deployment Bot
 
 `deploy-chat` is an interactive Render deployment assistant for accepted Python

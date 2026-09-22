@@ -68,8 +68,18 @@ def _parse_proposal(response: str) -> BuildProposal:
     return BuildProposal.model_validate(payload)
 
 
-def propose_build(ticket: Ticket, plan: ImplementationPlan) -> BuildProposal:
+def propose_build(
+    ticket: Ticket, plan: ImplementationPlan, profile: str = "library"
+) -> BuildProposal:
     """Generate implementation files for one approved plan."""
+    dependency_rule = (
+        "- Use Python standard library, FastAPI, and FastAPI TestClient only.\n"
+        "- Define `app = FastAPI()` in src/main.py.\n"
+        "- Implement GET /health and test it."
+        if profile == "fastapi"
+        else "- Use only Python standard library plus pytest in test files."
+    )
+
     prompt = f"""
 You are Builder Bot in a safe local engineering team.
 
@@ -91,7 +101,7 @@ Implementation steps:
 
 Rules:
 - Return content for every approved target file and no other file.
-- Use only Python standard library plus pytest in test files.
+{dependency_rule}
 - Tests must cover all acceptance criteria with correct expected values.
 - Do not put Markdown fences inside file content.
 """.strip()

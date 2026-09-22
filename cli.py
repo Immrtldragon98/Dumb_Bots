@@ -258,26 +258,35 @@ def review(project: str, request: str) -> None:
 
 
 @app.command()
-def run(project: str, request: str, approve: bool = False) -> None:
+def run(
+    project: str,
+    request: str,
+    approve: bool = False,
+    profile: str = typer.Option("library", help="Project profile: library or fastapi."),
+) -> None:
     """Run Lead → Architect → Builder → QA → Reviewer for one new feature."""
     try:
+        profile = profile.lower()
+        if profile not in {"library", "fastapi"}:
+            raise ValueError("Profile must be 'library' or 'fastapi'.")
+
         project_path = get_project_path(project)
         is_new_project = not project_path.exists()
         ticket = create_ticket(request)
 
         if is_new_project and not approve:
-            show_plan(ticket, create_plan(ticket, []))
+            show_plan(ticket, create_plan(ticket, [], profile))
             console.print(
                 "[yellow]Plan ready.[/yellow] Rerun with --approve to create it."
             )
             return
 
         workspace = (
-            initialize_new_python_project(project_path)
+            initialize_new_python_project(project_path, profile)
             if is_new_project
             else get_workspace(project)
         )
-        implementation_plan = create_plan(ticket, workspace.list_files())
+        implementation_plan = create_plan(ticket, workspace.list_files(), profile)
 
         if not approve:
             show_plan(ticket, implementation_plan)
@@ -286,7 +295,7 @@ def run(project: str, request: str, approve: bool = False) -> None:
 
         written = create_new_files(
             workspace,
-            propose_build(ticket, implementation_plan),
+            propose_build(ticket, implementation_plan, profile),
         )
         checks = run_checks(workspace)
         qa_report = evaluate_qa(ticket, collect_source_files(workspace), checks)

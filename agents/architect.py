@@ -16,7 +16,7 @@ class ImplementationPlan(BaseModel):
     risks: list[str] = Field(default_factory=list, max_length=4)
 
 
-def validate_plan(plan: ImplementationPlan) -> None:
+def validate_plan(plan: ImplementationPlan, profile: str = "library") -> None:
     """Reject plans with unsafe, placeholder, or incomplete file targets."""
     placeholders = {"relative", "path", "file", "todo", "example"}
 
@@ -35,9 +35,34 @@ def validate_plan(plan: ImplementationPlan) -> None:
     if not any("test" in Path(target).name for target in plan.target_files):
         raise ValueError("Plan must include a Python test file.")
 
+    if profile == "fastapi" and set(plan.target_files) != {
+        "src/main.py",
+        "tests/test_main.py",
+    }:
+        raise ValueError(
+            "FastAPI plans must target src/main.py and tests/test_main.py."
+        )
 
-def create_plan(ticket: Ticket, existing_files: list[str]) -> ImplementationPlan:
+
+def create_plan(
+    ticket: Ticket, existing_files: list[str], profile: str = "library"
+) -> ImplementationPlan:
     """Create a minimal plan for one approved ticket without changing code."""
+    if profile == "fastapi":
+        plan = ImplementationPlan(
+            target_files=["src/main.py", "tests/test_main.py"],
+            steps=[
+                "Create the FastAPI application and health endpoint.",
+                "Implement HTTP routes for the approved acceptance criteria.",
+                "Validate invalid request data with explicit HTTP responses.",
+                "Add API tests for health, success, and rejected inputs.",
+            ],
+            tests_to_add=ticket.acceptance_criteria[:5],
+            risks=["The generated API must preserve the ticket's exact behaviour."],
+        )
+        validate_plan(plan, profile)
+        return plan
+
     files = "\n".join(f"- {file_name}" for file_name in existing_files) or "- None"
 
     prompt = f"""
@@ -66,5 +91,5 @@ Rules:
     response = ask_model_json(prompt, ImplementationPlan.model_json_schema())
     payload = json.loads(extract_json_object(response))
     plan = ImplementationPlan.model_validate(payload)
-    validate_plan(plan)
+    validate_plan(plan, profile)
     return plan
